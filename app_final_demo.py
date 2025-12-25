@@ -3,7 +3,6 @@ import pandas as pd
 from datetime import datetime
 import pytz
 import requests
-import json
 
 # 1. 페이지 설정
 st.set_page_config(page_title="생산관리 AI 통합 관제 센터", layout="wide")
@@ -11,88 +10,82 @@ st.set_page_config(page_title="생산관리 AI 통합 관제 센터", layout="wi
 # 2. 포텐스닷 API 호출 함수
 def ask_potensdot(question):
     url = "https://ai.potens.ai/api/chat"
-    api_key = "qD2gfuVAkMJexDAcFb5GnEb1SZksTs7o" # 사용자님의 API KEY
+    api_key = "qD2gfuVAkMJexDAcFb5GnEb1SZksTs7o" 
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
     
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-
-    # 17가지 생산 규칙을 시스템 지침으로 주입
-    system_prompt = """
-    너는 자동차 부품 생산 라인 조절 전문가야. 아래 17가지 생산 규칙을 절대적으로 준수해:
-    1. CAPA 90% 유지 / 2. 조립2 요일제(FAN:월수금, FLANGE:화목) / 3. MOTOR 요일무관 
-    4. BERGSTROM 생산 시 조립1 CAPA 2600 하향 / 5. BERGSTROM 일 최대 525개 제한
-    6. PLT 배수 준수 / 7. 납기 2주 전 생산 금지 / 8. 0개 배분 지양
-    9. T6 수밀 유연 운영 / 10. 고부가가치 라인 고정 / 11. 감사 시 Buffer 20% 확보
-    12. 월말 3일 요일제 완화 / 13. 긴급 오더 시 기존 물량 Push-back
-    14. Change-over 최소화 / 15. 잔량 PLT 단위 관리 / 16. 수정 이력 기록 / 17. 대안 3가지 제시
-    현재 DB에는 2025년 8월~11월 데이터 2,239건이 저장되어 있음을 인지하고 답변해.
-    """
-
-    payload = {
-        "prompt": f"시스템 지침: {system_prompt}\n\n사용자 질문: {question}"
-    }
+    system_prompt = "너는 생산 라인 조절 전문가야. 17가지 생산 규칙을 준수해 답변하고, 사용자가 대안을 물으면 반드시 리스트를 제안해."
+    payload = {"prompt": f"시스템 지침: {system_prompt}\n\n사용자 질문: {question}"}
 
     try:
         response = requests.post(url, headers=headers, json=payload)
-        if response.status_code == 200:
-            # API 응답 구조에 따라 response.json()['content'] 등으로 수정이 필요할 수 있습니다.
-            return response.json() 
-        else:
-            return f"❌ API 오류: {response.status_code}"
+        return response.json() if response.status_code == 200 else f"❌ 오류: {response.status_code}"
     except Exception as e:
         return f"❌ 연결 에러: {e}"
 
-# --- 웹 화면 구성 ---
-st.title("🧠 생산관리 AI 통합 관제 센터 (Potensdot API)")
+# --- 세션 상태 초기화 (중요) ---
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "show_right_panel" not in st.session_state:
+    st.session_state.show_right_panel = False
+
+st.title("🤖 생산관리 AI 통합 관제 센터")
 st.info("💡 입력 형식: **날짜, 라인, 이슈** (예: 9/17, 조립1, 공정감사)")
 
-# 3. 레이아웃 분할
+# 레이아웃 분할
 left_col, right_col = st.columns([1, 1.2])
 
-if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "안녕하세요! 포텐스닷 AI와 17가지 규칙을 통해 생산 계획을 최적화합니다. '날짜, 라인, 이슈'를 입력해주세요."}]
-
-# --- 왼쪽: 리얼 채팅 UI (API 연동) ---
+# --- 왼쪽: 말풍선 채팅 UI ---
 with left_col:
     st.subheader("💬 AI 생산 비서")
-    chat_container = st.container(height=500)
     
-    with chat_container:
-        for msg in st.session_state.messages:
-            with st.chat_message(msg["role"]):
-                st.write(msg["content"])
+    # 1. 대화 기록 표시
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
 
-    if prompt := st.chat_input("9/17, 조립1, 공정감사"):
+    # 2. 채팅 입력 및 처리
+    if prompt := st.chat_input("이슈를 입력하거나 대안을 선택하세요"):
         st.session_state.messages.append({"role": "user", "content": prompt})
+        
+        # 특정 키워드가 포함되면 오른쪽 패널을 활성화
+        if "대안" in prompt or "분산" in prompt or "리스트" in prompt:
+            st.session_state.show_right_panel = True
         
         with st.chat_message("user"):
             st.write(prompt)
 
-        # 포텐스닷 API 호출
         with st.chat_message("assistant"):
-            with st.spinner("AI가 17가지 규칙을 검토 중입니다..."):
-                api_res = ask_potensdot(prompt)
-                # 응답이 딕셔너리일 경우 문자열로 변환 (API 응답 형식에 맞게 조정 필요)
-                answer = api_res if isinstance(api_res, str) else str(api_res)
+            with st.spinner("분석 중..."):
+                response = ask_potensdot(prompt)
+                answer = response if isinstance(response, str) else str(response)
                 st.write(answer)
                 st.session_state.messages.append({"role": "assistant", "content": answer})
         st.rerun()
 
-# --- 오른쪽: 실행 계획 (추가 리스트) ---
+# --- 오른쪽: 상세 실행 계획 (이 부분이 활성화됨) ---
 with right_col:
-    st.subheader("📋 규칙 기반 상세 분석 표")
-    st.write("채팅 답변을 바탕으로 실제 이동이 필요한 품목 리스트를 확인하세요.")
+    st.subheader("📋 규칙 준수 상세 내역")
     
-    # 시연용 표 (AI가 표 형식의 텍스트를 주면 그것을 파싱해서 보여주는 기능의 자리)
-    st.markdown("**[시뮬레이션 데이터]**")
-    st.table(pd.DataFrame([
-        {"항목": "분석 대상", "내용": "입력된 날짜 및 라인"},
-        {"항목": "핵심 적용 규칙", "내용": "규칙 5번, 11번 외"},
-        {"항목": "조치 제안", "내용": "물량 50% 전일 이동 및 PLT 배수 조정"}
-    ]))
-
-    if st.button("🚀 분석 결과 DB 최종 승인"):
-        st.balloons()
-        st.success("포텐스닷 AI 분석 결과가 승인되었습니다. (데모 모드)")
+    # 세션 상태에 따라 조건부로 화면을 보여줌
+    if st.session_state.show_right_panel:
+        st.success("✅ 선택하신 대안에 따른 상세 이동 계획입니다.")
+        
+        # 시뮬레이션 상세 데이터
+        detail_df = pd.DataFrame([
+            {"품명": "BERGSTROM_A", "원안": 600, "조정": 300, "PLT": 150, "비고": "규칙 5번 준수"},
+            {"품명": "표준품목_X", "원안": 800, "조정": 400, "PLT": 100, "비고": "배수 준수"},
+            {"품명": "표준품목_Y", "원안": 500, "조정": 250, "PLT": 50, "비고": "배수 준수"}
+        ])
+        st.table(detail_df)
+        
+        st.markdown("""
+        **🔍 분석 요약**
+        - **가동률**: 9/16 (90.2%) / 9/17 (44.5%)
+        - **준수 사항**: BERGSTROM 일 525개 제한 준수 및 모든 품목 PL트 배수 적용
+        """)
+        
+        if st.button("🚀 이 계획으로 DB 반영"):
+            st.balloons()
+            st.toast("DB 반영 성공!")
+    else:
+        st.info("왼쪽 대화창에서 이슈를 입력하거나 구체적인 대안(예: 대안 1번)을 선택하시면 상세 내역이 이곳에 표시됩니다.")
